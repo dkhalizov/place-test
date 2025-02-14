@@ -19,4 +19,4 @@ RUN adduser -S nodejs -u 1001
 USER nodejs
 
 EXPOSE 3000
-CMD ["serve", "-s", "build", "-l", "tcp://0.0.0.0:3000"]
+CMD ["serve", "-s", "build", "-l", "tcp://0.0.0.0:3000", "--no-clipboard", "--single"]
