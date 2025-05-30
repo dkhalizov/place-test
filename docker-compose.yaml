@@ -119,7 +119,7 @@ services:
       retries: 3
   
   redis:
-    image: redis:7.4.3-bookworm
+    image: redis:7.4.4-bookworm
     ports:
       - "6379:6379"
     networks:
