@@ -4,7 +4,7 @@ go 1.23.1
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/go-redis/redis/v9 v9.9.0
+	github.com/go-redis/redis/v9 v9.11.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/gorilla/websocket v1.5.3
 	github.com/segmentio/kafka-go v0.4.48
