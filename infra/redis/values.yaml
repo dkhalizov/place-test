@@ -23,7 +23,7 @@ master:
 # General configuration
 image:
   repository: bitnami/redis
-  tag: 8.0.2
+  tag: 8.0.3
   pullPolicy: IfNotPresent
 
 # Service configuration
