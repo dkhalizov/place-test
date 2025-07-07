@@ -1,12 +1,23 @@
-import React, {useCallback, useEffect, useState, useMemo} from 'react';
+import React, {useCallback, useEffect, useState, useMemo, useRef} from 'react';
 import {Alert, Button} from 'react-bootstrap';
 import {GoogleLogin, googleLogout} from '@react-oauth/google';
 import useGrid from '../hooks/useGrid';
 import PixelGrid from './PixelGrid';
 import ColorPicker from './ColorPicker';
-import {debounce} from 'lodash';
+// Simple debounce function to avoid lodash dependency
+const debounce = (func: (...args: any[]) => void, wait: number) => {
+    let timeout: NodeJS.Timeout;
+    return function executedFunction(...args: any[]) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+};
 import styled from 'styled-components';
-import {GRID_SIZE, INACTIVITY_TIMEOUT, MAX_RECONNECT_ATTEMPTS, COLORS} from '../utils/constants';
+import {GRID_SIZE, INACTIVITY_TIMEOUT, WS_MAX_RECONNECT_ATTEMPTS, COLORS} from '../constants';
 
 const AppContainer = styled.div`
     background: linear-gradient(to bottom right, #f0f0f0, #e0e0e0);
@@ -51,40 +62,50 @@ const GridContainer = styled.div`
     transition: transform 0.3s ease, box-shadow 0.3s ease;
 `;
 
+interface RPlaceCloneProps {
+    authEnabled: boolean;
+}
 
-const RPlaceClone = ({authEnabled}) => {
+interface PixelUpdate {
+    x: number;
+    y: number;
+    color: number;
+    Time: number;
+}
+
+const RPlaceClone: React.FC<RPlaceCloneProps> = ({authEnabled}) => {
     const [grid, setGrid, updateGrid] = useGrid();
     const [selectedColor, setSelectedColor] = useState(0);
-    const [error, setError] = useState(null);
-    const [token, setToken] = useState(() => localStorage.getItem('token'));
+    const [error, setError] = useState<string | null>(null);
+    const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
     const [isLoading, setIsLoading] = useState(false);
-    const [wsError, setWsError] = useState(null);
+    const [wsError, setWsError] = useState<string | null>(null);
     const [reconnectDelay, setReconnectDelay] = useState(1000);
     const [initialFetchDone, setInitialFetchDone] = useState(false);
     const [connectedClients, setConnectedClients] = useState(0);
     const [isSignedOut, setIsSignedOut] = useState(false);
 
-    const reconnectAttemptsRef = React.useRef(0);
-    const wsRef = React.useRef(null);
-    const lastUpdateRef = React.useRef(null);
+    const wsRef = useRef<WebSocket | null>(null);
+    const reconnectAttemptsRef = useRef(0);
+    const lastUpdateTimeRef = useRef<{ [key: string]: number }>({});
 
     const debouncedUpdateGrid = useCallback(
-        debounce((x, y, color) => {
+        debounce((x: number, y: number, color: number) => {
             updateGrid(x, y, color);
         }, 50),
         [updateGrid])
 
-    const handlePixel = useCallback((update) => {
+    const handlePixel = useCallback((update: PixelUpdate) => {
         const {x, y, color, Time} = update;
 
         // Check if this update is newer than the last one we processed
-        if (!lastUpdateRef.current || Time > lastUpdateRef.current) {
-            lastUpdateRef.current = Time;
-            debouncedUpdateGrid(x, y, color);
-
-        } else {
-            console.log('Skipped duplicate or older update');
+        const key = `${x},${y}`;
+        if (lastUpdateTimeRef.current[key] && lastUpdateTimeRef.current[key] >= Time) {
+            return;
         }
+
+        lastUpdateTimeRef.current[key] = Time;
+        debouncedUpdateGrid(x, y, color);
     }, [debouncedUpdateGrid]);
 
     useEffect(() => {
@@ -111,6 +132,8 @@ const RPlaceClone = ({authEnabled}) => {
 
         ws.onopen = () => {
             console.log('WebSocket connected');
+            setWsError(null);
+            reconnectAttemptsRef.current = 0;
         };
         ws.binaryType = 'arraybuffer';
         ws.onmessage = async (event) => {
@@ -126,7 +149,7 @@ const RPlaceClone = ({authEnabled}) => {
                     }
                     case 4: {
                         // pixel update
-                        handlePixel(decodePixel(view))
+                        handlePixel(decodePixel(event.data))
                         break
                     }
                     default:
@@ -137,8 +160,8 @@ const RPlaceClone = ({authEnabled}) => {
             }
         }
 
-        function decodePixel(encoded) {
-            const view = new DataView(encoded.buffer);
+        function decodePixel(encoded: ArrayBuffer): PixelUpdate {
+            const view = new DataView(encoded);
 
             const combinedX = view.getUint16(1, false);
             const x = combinedX & 0x3FFF;
@@ -155,7 +178,7 @@ const RPlaceClone = ({authEnabled}) => {
                 x: x,
                 y: y,
                 color: color,
-                time: time
+                Time: time
             };
         }
 
@@ -164,16 +187,19 @@ const RPlaceClone = ({authEnabled}) => {
         };
 
         ws.onclose = () => {
-            setTimeout(() => {
-                if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-                    reconnectAttemptsRef.current++;
-                    reconnectWebSocket();
+            console.log('WebSocket disconnected');
+            if (!isSignedOut) {
+                if (reconnectAttemptsRef.current < WS_MAX_RECONNECT_ATTEMPTS) {
+                    setTimeout(() => {
+                        reconnectAttemptsRef.current++;
+                        reconnectWebSocket();
+                    }, 1000 * Math.pow(2, reconnectAttemptsRef.current));
                 } else {
                     setError('Unable to connect to the server. Please try again later.');
                     setIsSignedOut(true)
                     wsRef.current = null;
                 }
-            }, 1000 * Math.pow(2, reconnectAttemptsRef.current));
+            }
         };
 
         wsRef.current = ws;
@@ -184,27 +210,22 @@ const RPlaceClone = ({authEnabled}) => {
             console.log('User is signed out. Skipping WebSocket reconnection.');
             return;
         }
-        if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        if (reconnectAttemptsRef.current >= WS_MAX_RECONNECT_ATTEMPTS) {
             console.log('Max reconnection attempts reached. Stopping reconnection.');
             setWsError('Unable to establish WebSocket connection. Please refresh the page.');
             return;
         }
 
-        reconnectAttemptsRef.current++;
-        const nextDelay = Math.min(30000, reconnectDelay * 2);
-        console.log(`Reconnecting in ${nextDelay}ms (attempt ${reconnectAttemptsRef.current} of ${MAX_RECONNECT_ATTEMPTS})`);
-
         setTimeout(() => {
+            reconnectAttemptsRef.current++;
             connectWebSocket();
-            setReconnectDelay(nextDelay);
-        }, nextDelay);
-    }, [connectWebSocket, reconnectDelay, isSignedOut]);
+        }, 1000 * Math.pow(2, reconnectAttemptsRef.current));
+    }, [connectWebSocket]);
 
     useEffect(() => {
         if (token && !initialFetchDone && !isSignedOut) {
             console.log('Token available, fetching grid and connecting WebSocket');
-            reconnectAttemptsRef.current = 0;
-            return connectWebSocket();
+            connectWebSocket();
         } else if (!token || isSignedOut) {
             localStorage.removeItem('token');
             if (wsRef.current) {
@@ -215,7 +236,7 @@ const RPlaceClone = ({authEnabled}) => {
     }, [token, connectWebSocket, initialFetchDone, setGrid, isSignedOut]);
 
 
-    const handleGoogleSignIn = useCallback(async (tokenResponse) => {
+    const handleGoogleSignIn = useCallback(async (tokenResponse: any) => {
         try {
             setIsLoading(true);
             setIsSignedOut(false);
@@ -264,7 +285,7 @@ const RPlaceClone = ({authEnabled}) => {
         return () => clearInterval(intervalId);
     }, [token]);
 
-    const handlePixelUpdate = useCallback(async (x, y) => {
+    const handlePixelUpdate = useCallback(async (x: number, y: number) => {
         if (!token) {
             setError('Please sign in to update pixels');
             return;
@@ -280,14 +301,15 @@ const RPlaceClone = ({authEnabled}) => {
                 body: JSON.stringify({x, y, color: selectedColor}),
             });
 
-            if (!response.ok) {
+            if (response.ok) {
+                // Update the grid only after a successful backend response
+                updateGrid(x, y, selectedColor);
+            } else {
                 throw new Error('Failed to update pixel');
             }
-
-            // Optimistically update the grid
-            updateGrid(x, y, selectedColor);
         } catch (err) {
-            setError(err.message);
+            const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+            setError(errorMessage);
         }
     }, [token, selectedColor, updateGrid]);
 

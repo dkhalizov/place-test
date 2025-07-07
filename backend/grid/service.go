@@ -11,7 +11,7 @@ import (
 
 	"backend/internal/protocol"
 	"backend/logging"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -43,7 +43,7 @@ type RedisClient interface {
 	XGroupCreateMkStream(ctx context.Context, stream, group, start string) *redis.StatusCmd
 	Publish(ctx context.Context, channel string, message interface{}) *redis.IntCmd
 	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
-	ZAdd(ctx context.Context, key string, members ...*redis.Z) *redis.IntCmd
+	ZAdd(ctx context.Context, key string, members ...redis.Z) *redis.IntCmd
 	Exists(ctx context.Context, keys ...string) *redis.IntCmd
 	SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.BoolCmd
 	BitField(ctx context.Context, key string, args ...interface{}) *redis.IntSliceCmd
@@ -247,10 +247,11 @@ func parseMessageTimestamp(id string) (int64, error) {
 func (s *Service) storeUpdate(epoch int64, value string, timestamp int64) error {
 	key := fmt.Sprintf("%s:%s:%d", s.config.GridKey, UpdatesKeyPrefix, epoch)
 
-	return s.redisClient.ZAdd(s.ctx, key, &redis.Z{
+	members := []redis.Z{{
 		Score:  float64(timestamp),
 		Member: value,
-	}).Err()
+	}}
+	return s.redisClient.ZAdd(s.ctx, key, members...).Err()
 }
 
 func (s *Service) updateLatestEpoch(epoch int64) error {

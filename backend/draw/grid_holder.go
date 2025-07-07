@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"backend/internal/protocol"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 type CellBroadcast struct {

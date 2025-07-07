@@ -1,22 +1,43 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import PropTypes from 'prop-types';
+import { INITIAL_ZOOM, MAX_ZOOM, MIN_ZOOM } from '../constants';
 
-const INITIAL_ZOOM = 1;
-const MAX_ZOOM = 40;
-const MIN_ZOOM = 1;
+interface PixelGridProps {
+  grid: Uint8Array;
+  onPixelClick: (x: number, y: number) => void;
+  size: number;
+  colors: readonly string[];
+  connectedClients?: number;
+  disabled?: boolean;
+  loading?: boolean;
+}
 
-const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClients }) => {
-    const canvasRef = useRef(null);
+interface CanvasPosition {
+  x: number;
+  y: number;
+}
+
+const PixelGrid = React.memo<PixelGridProps>(({ 
+  grid, 
+  onPixelClick, 
+  size, 
+  colors, 
+  connectedClients = 0,
+  disabled = false,
+  loading = false
+}) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
     const [zoom, setZoom] = useState(INITIAL_ZOOM);
-    const [offset, setOffset] = useState({ x: 0, y: 0 });
+    const [offset, setOffset] = useState<CanvasPosition>({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
-    const [hoveredPixel, setHoveredPixel] = useState(null);
-    const lastMousePosRef = useRef({ x: 0, y: 0 });
+    const [hoveredPixel, setHoveredPixel] = useState<CanvasPosition | null>(null);
+    const lastMousePosRef = useRef<CanvasPosition>({ x: 0, y: 0 });
 
     const drawGrid = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        
         const canvasSize = Math.min(canvas.width, canvas.height);
         const scaleFactor = canvasSize / size;
 
@@ -57,14 +78,18 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         // Highlight hovered pixel
         if (hoveredPixel) {
             const { x, y } = hoveredPixel;
+            ctx.save();
+            ctx.scale(zoom, zoom);
+            ctx.translate(-offset.x, -offset.y);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
             ctx.lineWidth = 2 / zoom;
             ctx.strokeRect(
-                (x - offset.x) * scaleFactor * zoom,
-                (y - offset.y) * scaleFactor * zoom,
-                scaleFactor * zoom,
-                scaleFactor * zoom
+                x * scaleFactor,
+                y * scaleFactor,
+                scaleFactor,
+                scaleFactor
             );
+            ctx.restore();
         }
     }, [grid, size, colors, zoom, offset, hoveredPixel, connectedClients]);
 
@@ -76,8 +101,8 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         const canvas = canvasRef.current;
         if (!canvas) return;
         const updateCanvasSize = () => {
-            const containerWidth = canvas.parentElement.clientWidth;
-            const containerHeight = canvas.parentElement.clientHeight;
+            const containerWidth = canvas.parentElement?.clientWidth || 1000;
+            const containerHeight = canvas.parentElement?.clientHeight || 1000;
             const canvasSize = Math.min(containerWidth, containerHeight);
             canvas.width = canvasSize;
             canvas.height = canvasSize;
@@ -92,12 +117,14 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         };
     }, [drawGrid]);
 
-    const handleWheel = useCallback((event) => {
+    const handleWheel = useCallback((event: WheelEvent) => {
         event.preventDefault();
         const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
         setZoom((prevZoom) => {
             const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, prevZoom * zoomFactor));
-            const canvasRect = canvasRef.current.getBoundingClientRect();
+            const canvasRect = canvasRef.current?.getBoundingClientRect();
+            if (!canvasRect) return prevZoom;
+            
             const mouseX = event.clientX - canvasRect.left;
             const mouseY = event.clientY - canvasRect.top;
 
@@ -119,12 +146,13 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         });
     }, [size]);
 
-    const handleMouseDown = useCallback((event) => {
+    const handleMouseDown = useCallback((event: React.MouseEvent) => {
+        if (disabled || loading) return;
         setIsDragging(true);
         lastMousePosRef.current = { x: event.clientX, y: event.clientY };
-    }, []);
+    }, [disabled, loading]);
 
-     const handleMouseMove = useCallback((event) => {
+     const handleMouseMove = useCallback((event: React.MouseEvent) => {
          if (isDragging) {
              const dx = event.clientX - lastMousePosRef.current.x;
              const dy = event.clientY - lastMousePosRef.current.y;
@@ -152,9 +180,12 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
              const rect = canvas.getBoundingClientRect();
              const canvasSize = rect.width;
              const scaleFactor = canvasSize / size;
-             const x = Math.floor((event.clientX - rect.left) / (scaleFactor * zoom) + offset.x);
-             const y = Math.floor((event.clientY - rect.top) / (scaleFactor * zoom) + offset.y);
-
+                  // Calculate pixel coordinates relative to the grid
+                  const mouseX = event.clientX - rect.left;
+                  const mouseY = event.clientY - rect.top;
+                  const x = Math.floor(mouseX / (scaleFactor * zoom) + offset.x);
+                  const y = Math.floor(mouseY / (scaleFactor * zoom) + offset.y);
+     
              if (x >= 0 && x < size && y >= 0 && y < size) {
                  setHoveredPixel({ x, y });
              } else {
@@ -167,7 +198,14 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         setIsDragging(false);
     }, []);
 
-    const handleClick = useCallback((event) => {
+    const handleMouseLeave = useCallback(() => {
+        setIsDragging(false);
+        setHoveredPixel(null);
+    }, []);
+
+    const handleClick = useCallback((event: React.MouseEvent) => {
+        if (disabled || loading) return;
+        
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
@@ -179,7 +217,7 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         if (x >= 0 && x < size && y >= 0 && y < size) {
             onPixelClick(x, y);
         }
-    }, [onPixelClick, size, zoom, offset]);
+    }, [onPixelClick, size, zoom, offset, disabled, loading]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -194,34 +232,23 @@ const PixelGrid = React.memo(({ grid, onPixelClick, size, colors, connectedClien
         <div style={{ position: 'relative', width: '100%', height: '100%', aspectRatio: '1 / 1' }}>
             <canvas
                 width={1000}
-                height = {1000}
+                height={1000}
                 ref={canvasRef}
                 onClick={handleClick}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
-                onMouseLeave={() => {
-                    setIsDragging(false);
-                    setHoveredPixel(null);
-                }}
+                onMouseLeave={handleMouseLeave}
                 style={{
-                    width: '100%',
-                    height: '100%',
-                    cursor: isDragging ? 'grabbing' : 'crosshair',
-                    overscrollBehavior: 'none',
-                    touchAction: 'none'
+                    cursor: isDragging ? 'grabbing' : (hoveredPixel ? 'crosshair' : 'grab'),
+                    opacity: loading ? 0.7 : 1,
+                    pointerEvents: disabled ? 'none' : 'auto',
                 }}
             />
         </div>
     );
 });
 
-PixelGrid.propTypes = {
-    grid: PropTypes.object.isRequired,
-    onPixelClick: PropTypes.func.isRequired,
-    size: PropTypes.number.isRequired,
-    colors: PropTypes.arrayOf(PropTypes.string).isRequired,
-    connectedClients: PropTypes.number.isRequired,
-};
+PixelGrid.displayName = 'PixelGrid';
 
 export default PixelGrid;
