@@ -87,7 +87,7 @@ services:
       retries: 3
   
   redis:
-    image: redis:8.0.2-bookworm
+    image: redis:8.0.3-bookworm
     ports:
       - "6379:6379"
     networks:
