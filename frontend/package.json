@@ -19,7 +19,7 @@
     "bootstrap": "^5.3.3",
     "components": "^0.1.0",
     "frontend": "file:",
-    "lucide-react": "^0.514.0",
+    "lucide-react": "^0.535.0",
     "prop-types": "^15.8.1",
     "react": "^18.2.0",
     "react-bootstrap": "^2.10.4",
