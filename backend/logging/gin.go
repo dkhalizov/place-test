@@ -11,6 +11,7 @@ import (
 var ingnoredLogPath = []string{"/healthz", "/probes", "/metrics"}
 
 func Ginrus() gin.HandlerFunc {
+	logrus.SetLevel(logrus.DebugLevel)
 	return func(c *gin.Context) {
 		start := time.Now()
 		// some evil middlewares modify this values
